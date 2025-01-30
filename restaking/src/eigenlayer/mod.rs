@@ -1,11 +1,24 @@
-use alloy::{
-    network::Network,
-    primitives::{address, Address, FixedBytes, Uint, U256},
-    providers::RootProvider,
-    sol,
-    transports::Transport,
+use alloy_primitives::{address, Address, FixedBytes, Uint, U256, Bytes};
+use alloy_network::Network;
+use alloy::providers::RootProvider;
+use alloy_sol_types::sol
+use alloy_transport::Transport;
+use alloy_contract::Error as ContractError;
+use eigen_utils::middleware::{operatorstateretriever::OperatorStateRetriever, registrycoordinator::RegistryCoordinator};
+use url::Url;
+use std::{collections::HashSet, time::Duration};
+use eigen_client_avsregistry::reader::AvsRegistryChainReader;
+use eigen_logging::{get_logger, init_logger};
+use eigen_logging::logger::Logger;
+use eigen_logging::noop_logger::NoopLogger;
+use eigen_services_avsregistry::chaincaller::AvsRegistryServiceChainCaller;
+use eigen_services_operatorsinfo::operatorsinfo_inmemory::OperatorInfoServiceInMemory;
+use eigen_crypto_bls::{Signature, BlsG2Point};
+use eigen_types::{
+    avs::TaskResponseDigest,
+    operator::QuorumThresholdPercentages,
 };
-use std::collections::HashSet;
+
 
 // Codegen from ABI file to interact with the OperatorStateRetriever contract.
 sol!(
@@ -23,28 +36,50 @@ sol!(
     "src/eigenlayer/abi/registry_coordinator.json"
 );
 
-/// source: https://github.com/Layr-Labs/eigenlayer-middleware
-/// Contracts from middleware are supposed to be deployed for each AVS but
-/// OperatorStateRetriever looks generic for everyone.
+/// source: https://github.com/Layr-Labs/eigenlayer-middleware 
+/// OperatorStateRetriever is compatible with Eigenlayer's BLS middleware, 
+/// this is the address of the OperatorStateRetriever contract deployed Ethereum mainnet.
 const OPERATOR_STATE_RETRIEVER_ADDRESS: Address =
     address!("0xd5d7fb4647ce79740e6e83819efdf43fa74f8c31");
 
-pub struct EigenStakingClient<T: Transport + std::clone::Clone, N: Network> {
+pub struct EigenStakingClient<T: Transport + std::clone::Clone, N: alloy_network::Network> {
     provider: RootProvider<T, N>,
     operator_state_retriever_address: Address,
     registry_coordinator_address: Address,
 }
 
-impl<T: Transport + std::clone::Clone, N: Network> EigenStakingClient<T, N> {
-    pub fn new(
+impl<T: Transport + std::clone::Clone, N: alloy_network::Network> EigenStakingClient<T, N> {
+    pub async fn new(
         provider: RootProvider<T, N>,
         registry_coordinator_address: Address,
         operator_state_retriever_address: Option<Address>,
     ) -> Self {
-        let operator_state_retriever_address = match operator_state_retriever_address {
-            Some(address) => address,
-            None => OPERATOR_STATE_RETRIEVER_ADDRESS,
-        };
+        let registry_coordinator_address: Address = address!("eCd099fA5048c3738a5544347D8cBc8076E76494").into(); // TODO: get from config
+        let operator_state_retriever_address: Address = address!("D5D7fB4647cE79740E6e83819EFDf43fa74F8C31").into(); // TODO: get from config
+        let http_endpoint = String::from("http://ethereum:8545"); // TODO: get from .env
+        let ws_endpoint = String::from("ws://ethereum:8545"); // TODO: get from .env
+    
+        let _provider: RootProvider<_, Ethereum> = RootProvider::new_http(Url::parse(&http_endpoint).unwrap());
+        let current_block_num = _provider.get_block_number().await.unwrap();
+        let quorum_nums = Bytes::from([0u8]);
+        let quorum_threshold_percentages: QuorumThresholdPercentages = vec![33];
+        let time_to_expiry = Duration::from_secs(1000);
+    
+        // Create avs clients to interact with contracts deployed on anvil
+        let avs_registry_reader = AvsRegistryChainReader::new(
+            get_logger().clone(),
+            registry_coordinator_address,
+            operator_state_retriever_address,
+            http_endpoint.clone(),
+        ).await.unwrap();
+    
+        let (operators_info, _rx) = OperatorInfoServiceInMemory::new(
+            get_logger(),
+            avs_registry_reader.clone(),
+            ws_endpoint,
+        ).await.unwrap();
+        let operators_info_clone = operators_info.clone();
+    
         Self {
             provider,
             registry_coordinator_address,
@@ -55,10 +90,10 @@ impl<T: Transport + std::clone::Clone, N: Network> EigenStakingClient<T, N> {
     pub async fn get_avs_operators(
         &self,
         block_number: u32,
-    ) -> Result<OperatorState, alloy::contract::Error> {
+    ) -> Result<OperatorState, ContractError> {
         let registry_coordinator =
             RegistryCoordinator::new(self.registry_coordinator_address, self.provider.clone());
-        let operation_state_retriever = OperationStateRetriever::new(
+        let operator_state_retriever = OperatorStateRetriever::new(
             self.operator_state_retriever_address,
             self.provider.clone(),
         );
@@ -66,7 +101,7 @@ impl<T: Transport + std::clone::Clone, N: Network> EigenStakingClient<T, N> {
         let builder = registry_coordinator.quorumCount();
         let quorum_count = builder.call().await?._0;
         let quorum_numbers: Vec<u8> = Vec::from_iter(1..=quorum_count);
-        let operators_state = operation_state_retriever
+        let operators_state = operator_state_retriever
             .getOperatorState_0(
                 self.registry_coordinator_address,
                 quorum_numbers.into(),

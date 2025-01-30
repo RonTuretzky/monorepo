@@ -5,12 +5,25 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-alloy = { version = "0.9.2", features = ["full"] }
+alloy = { version = "0.5.4", features = ["providers"] }
+alloy-primitives = "0.5.4"
+alloy-network = "0.5.4"
+alloy-sol-types = "0.5.4"
+alloy-transport = "0.5.4"
+alloy-contract = "0.5.4"
+eigen-client-avsregistry = "0.1.2"
+eigen-logging = "0.1.1"
+eigen-services-avsregistry = "0.1.2"
+eigen-services-operatorsinfo = "0.1.2"
+eigen-types = "0.1.2"
+eigen-utils = "0.1.2"
+eigen-crypto-bls = "0.1.2"
+url = "2.4.1"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["full"] }
-alloy-json-rpc = "0.9.2"
-alloy-node-bindings = "0.9.2"
+alloy-json-rpc = "0.5.4"
+alloy-node-bindings = "0.5.4"
 tokio = { version = "1", features = ["full"] }
 rand = { workspace = true }
 
