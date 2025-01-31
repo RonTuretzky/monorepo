@@ -96,8 +96,8 @@ use tokio::{task, time::sleep};
     pub async fn init_avs_registry_service() -> Result<AvsRegistryServiceChainCaller<AvsRegistryChainReader, OperatorInfoServiceInMemory>, Box<dyn std::error::Error>> {
         let registry_coordinator_address: Address = address!("0x0BAAc79acD45A023E19345c352d8a7a83C4e5656").into();
         let operator_state_retriever_address: Address = address!("D5D7fB4647cE79740E6e83819EFDf43fa74F8C31").into();
-        let http_endpoint = String::from("https://eth-mainnet.g.alchemy.com/v2/Rr57Q41YGfkxYkx0kZp3EOQs86HatGGE");
-        let ws_endpoint = String::from("wss://eth-mainnet.g.alchemy.com/v2/Rr57Q41YGfkxYkx0kZp3EOQs86HatGGE");
+        let http_endpoint = String::from("https://rpc.eth.gateway.fm");
+        let ws_endpoint = String::from("https://rpc.eth.gateway.fm");
 
         let provider: RootProvider<_, Ethereum> = RootProvider::new_http(Url::parse(&http_endpoint)?);
         let current_block_num = provider.get_block_number().await?;
