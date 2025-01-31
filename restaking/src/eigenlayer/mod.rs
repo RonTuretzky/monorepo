@@ -1,3 +1,4 @@
+use alloy::hex::FromHex;
 use eigen_services_avsregistry::AvsRegistryService;
 use eigen_services_blsaggregation::bls_agg::BlsAggregatorService;
 use eigen_client_avsregistry::reader::AvsRegistryChainReader;
@@ -93,7 +94,7 @@ use tokio::{task, time::sleep};
 //     }
 
     pub async fn init_avs_registry_service() -> Result<AvsRegistryServiceChainCaller<AvsRegistryChainReader, OperatorInfoServiceInMemory>, Box<dyn std::error::Error>> {
-        let registry_coordinator_address: Address = address!("eCd099fA5048c3738a5544347D8cBc8076E76494").into();
+        let registry_coordinator_address: Address = address!("0x0BAAc79acD45A023E19345c352d8a7a83C4e5656").into();
         let operator_state_retriever_address: Address = address!("D5D7fB4647cE79740E6e83819EFDf43fa74F8C31").into();
         let http_endpoint = String::from("https://eth-mainnet.g.alchemy.com/v2/Rr57Q41YGfkxYkx0kZp3EOQs86HatGGE");
         let ws_endpoint = String::from("wss://eth-mainnet.g.alchemy.com/v2/Rr57Q41YGfkxYkx0kZp3EOQs86HatGGE");
@@ -118,7 +119,7 @@ use tokio::{task, time::sleep};
         ).await?;
         println!("operators_info: {:?}", operators_info);
         operators_info.query_past_registered_operator_events_and_fill_db(20227142, 21738230).await?;
-        let operator_info_data   = operators_info.get_operator_info(address!("0x30EAfE8869a1528660a97b7a7E8e2d0037dCb922")).await?;
+        let operator_info_data   = operators_info.get_operator_info(address!("0x9b59cBC9392EC5e2e5791Ad14D6c97C388e7F06f")).await?;
         println!("operator_info_data: {:?}", operator_info_data);
         // let operators_info.get
         // Create a channel for coordinating shutdown
@@ -139,9 +140,9 @@ use tokio::{task, time::sleep};
             avs_registry_reader.clone(), 
             operators_info.clone()
         );
-        let quorum_numbers = vec![1];
+        let quorum_numbers = Bytes::from_hex("0x00").expect("failed to generate bytes");
 
-        let operators_state = avs_registry_service.get_operators_avs_state_at_block(20227142, &quorum_nums).await?;
+        let operators_state = avs_registry_service.get_operators_avs_state_at_block(20227142, &quorum_numbers).await?;
         println!("operators_state: {:?}", operators_state);
         Ok(avs_registry_service)
     }
