@@ -1,4 +1,3 @@
-use alloy::hex::FromHex;
 use eigen_services_avsregistry::AvsRegistryService;
 use eigen_services_blsaggregation::bls_agg::BlsAggregatorService;
 use eigen_client_avsregistry::reader::AvsRegistryChainReader;
@@ -13,42 +12,31 @@ use eigen_types::{
     avs::TaskResponseDigest,
     operator::QuorumThresholdPercentages,
 };
+use eigen_utils::middleware::operatorstateretriever::OperatorStateRetriever;
+use eigen_common::get_provider;
+
 use alloy_primitives::{Address, Bytes, FixedBytes, address};
 use alloy_provider::{Provider, RootProvider};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, Network};
+use alloy_transport::Transport;
+
 use url::Url;
 use std::time::Duration;
 use std::str::FromStr;
 use tokio_util::sync::CancellationToken;
 use tokio::{task, time::sleep};
+use std::collections::HashSet;
 
-// // Codegen from ABI file to interact with the OperatorStateRetriever contract.
-// sol!(
-//     #[allow(clippy::too_many_arguments)]
-//     #[sol(rpc)]
-//     OperationStateRetriever,
-//     "src/eigenlayer/abi/operator_state_retriever.json"
-// );
+/// source: https://github.com/Layr-Labs/eigenlayer-middleware
+/// Contracts from middleware are supposed to be deployed for each AVS but
+/// OperatorStateRetriever looks generic for everyone.
+const OPERATOR_STATE_RETRIEVER_ADDRESS: Address =
+    address!("D5D7fB4647cE79740E6e83819EFDf43fa74F8C31");
 
-// // Codegen from ABI file to interact with the RegistryCoordinator contract.
-// sol!(
-//     #[allow(clippy::too_many_arguments)]
-//     #[sol(rpc)]
-//     RegistryCoordinator,
-//     "src/eigenlayer/abi/registry_coordinator.json"
-// );
-
-// /// source: https://github.com/Layr-Labs/eigenlayer-middleware
-// /// Contracts from middleware are supposed to be deployed for each AVS but
-// /// OperatorStateRetriever looks generic for everyone.
-// const OPERATOR_STATE_RETRIEVER_ADDRESS: Address =
-//     address!("0xd5d7fb4647ce79740e6e83819efdf43fa74f8c31");
-
-// pub struct EigenStakingClient<T: Transport + std::clone::Clone, N: Network> {
-//     provider: RootProvider<T, N>,
-//     operator_state_retriever_address: Address,
-//     registry_coordinator_address: Address,
-// }
+pub struct EigenStakingClient<T: Transport + std::clone::Clone, N: Network> {
+    provider: RootProvider<T, N>,
+    registry_coordinator_address: Address,
+}
 
 // impl<T: Transport + std::clone::Clone, N: Network> EigenStakingClient<T, N> {
 //     pub fn new(
@@ -93,58 +81,55 @@ use tokio::{task, time::sleep};
 //         Ok(OperatorState::new(block_number, operators_state))
 //     }
 
-    pub async fn init_avs_registry_service() -> Result<AvsRegistryServiceChainCaller<AvsRegistryChainReader, OperatorInfoServiceInMemory>, Box<dyn std::error::Error>> {
-        let registry_coordinator_address: Address = address!("0x0BAAc79acD45A023E19345c352d8a7a83C4e5656").into();
+    pub async fn init_avs_registry_service() {
+        let registry_coordinator_address: Address = address!("0xeCd099fA5048c3738a5544347D8cBc8076E76494").into();
         let operator_state_retriever_address: Address = address!("D5D7fB4647cE79740E6e83819EFDf43fa74F8C31").into();
-        let http_endpoint = String::from("https://rpc.eth.gateway.fm");
-        let ws_endpoint = String::from("https://rpc.eth.gateway.fm");
-
-        let provider: RootProvider<_, Ethereum> = RootProvider::new_http(Url::parse(&http_endpoint)?);
-        let current_block_num = provider.get_block_number().await?;
-        let quorum_nums = Bytes::from([0u8]);
-        let quorum_threshold_percentages: QuorumThresholdPercentages = vec![33];
-        let time_to_expiry = Duration::from_secs(1000);
-
+        let http_endpoint = String::from("https://eth.llamarpc.com");
+        let ws_endpoint = String::from("wss://mainnet.gateway.tenderly.co");
+        let provider: RootProvider<_, Ethereum> = RootProvider::new_http(Url::parse(&http_endpoint).unwrap());
         let avs_registry_reader = AvsRegistryChainReader::new(
             get_logger().clone(),
             registry_coordinator_address,
             operator_state_retriever_address,
             http_endpoint.clone(),
-        ).await?;
+        ).await.expect("Failed to create avs registry reader");
         println!("avs_registry_reader: {:?}", avs_registry_reader);
         let (operators_info, _rx) = OperatorInfoServiceInMemory::new(
             get_logger(),
             avs_registry_reader.clone(),
             ws_endpoint,
-        ).await?;
+        ).await.expect("Failed to create operator info service");
         println!("operators_info: {:?}", operators_info);
-        operators_info.query_past_registered_operator_events_and_fill_db(20227142, 21738230).await?;
-        let operator_info_data   = operators_info.get_operator_info(address!("0x9b59cBC9392EC5e2e5791Ad14D6c97C388e7F06f")).await?;
-        println!("operator_info_data: {:?}", operator_info_data);
-        // let operators_info.get
-        // Create a channel for coordinating shutdown
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-        let cancellation_token = CancellationToken::new();
-        let token_clone = cancellation_token.clone();
-        let operators_info_clone = operators_info.clone();
+        operators_info.query_past_registered_operator_events_and_fill_db(20227142, 21738679).await.expect("Failed to query past events");
+        let provider = get_provider("https://withered-convincing-meadow.quiknode.pro/89fd706450ed0a8279f87c01e52ae78d9b308ce7");
+        let contract = OperatorStateRetriever::new(operator_state_retriever_address, provider);
+        let quorum_numbers: Vec<u8> = vec![0];
+        let operators_state = match contract.getOperatorState_0(registry_coordinator_address, quorum_numbers.into(), 21738679).call().await {
+            Ok(result) => result._0,
+            Err(e) => {
+                println!("Error getting operator state: {}", e);
+                return;
+            }
+        };
+        println!("Number of operator states: {}", operators_state.len());
+        println!("\nOperators Details:");
+        for (i, operators) in operators_state.iter().enumerate() {
+            println!("\nQuorum {}:", i);
+            for op in operators {
+                println!("\n  Operator Address: {}", op.operator);
+                println!("  Stake: {}", op.stake);
+                if let Ok(info) = operators_info.get_operator_info(op.operator).await {
+                    println!("  Operator Info: {:?}", info);
+                }
+                if let Ok(info) = operators_info.get_operator_socket(op.operator).await {
+                    println!("  Operator Socket: {:?}", info);
+                }
+            }
+        }
+        // let operators_state = avs_registry_service.get_operators_avs_state_at_block(20227142, &quorum_numbers).await?;
+        // // println!("operators_state: {:?}", operators_state);
+        // Ok(avs_registry_service)
 
-        // Spawn the operator info service
-        task::spawn(async move { 
-            let _ = operators_info_clone.start_service(&token_clone, 20227142, 0).await;
-            let _ = tx.send(()).await;  // Signal that the service has stopped
-        });
-            
-        println!("waiting for services to initialize...");
-
-        let avs_registry_service = AvsRegistryServiceChainCaller::new(
-            avs_registry_reader.clone(), 
-            operators_info.clone()
-        );
-        let quorum_numbers = Bytes::from_hex("0x00").expect("failed to generate bytes");
-
-        let operators_state = avs_registry_service.get_operators_avs_state_at_block(20227142, &quorum_numbers).await?;
-        println!("operators_state: {:?}", operators_state);
-        Ok(avs_registry_service)
     }
 
     
@@ -413,10 +398,9 @@ use tokio::{task, time::sleep};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the AVS registry service
-    let avs_registry_service = init_avs_registry_service().await?;
+    let _avs_registry_service = init_avs_registry_service().await;
     
     // The service is now initialized and ready to use
     println!("AVS Registry Service initialized successfully!");
-    
     Ok(())
 }
