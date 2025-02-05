@@ -18,6 +18,7 @@ alloy-primitives = "0.8.15"
 alloy-provider = "0.5.4"
 alloy-network = "0.5.4"
 alloy-transport = "0.5.4"
+alloy-transport-http = "0.5.4"
 eigen-types = "0.1.2"
 eigen-utils = "0.1.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
