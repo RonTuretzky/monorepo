@@ -5,12 +5,36 @@ use eigen_services_operatorsinfo::operatorsinfo_inmemory::OperatorInfoServiceInM
 use eigen_utils::middleware::operatorstateretriever::OperatorStateRetriever;
 use eigen_common::get_provider;
 
-use alloy_primitives::{Address, address};
+use alloy_primitives::{Address, address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_network::Ethereum;
+use eigen_crypto_bls::{BlsG1Point, BlsG2Point};
 
 use url::Url;
 use std::sync::Arc;
+
+#[derive(Debug)]
+pub struct OperatorPubKeys {
+    pub g1_pub_key: BlsG1Point,
+    pub g2_pub_key: BlsG2Point,
+}
+
+#[derive(Debug)]
+pub struct OperatorInfo {
+    pub address: Address,
+    pub stake: U256,
+    pub pub_keys: Option<OperatorPubKeys>,
+    pub socket: Option<String>,
+    pub quorum_number: u8,
+}
+
+#[derive(Debug)]
+pub struct QuorumInfo {
+    pub quorum_number: u8,
+    pub operator_count: usize,
+    pub total_stake: U256,
+    pub operators: Vec<OperatorInfo>,
+}
 
 /// source: https://github.com/Layr-Labs/eigenlayer-middleware
 /// Contracts from middleware are supposed to be deployed for each AVS but
@@ -32,7 +56,6 @@ impl EigenStakingClient {
         registry_coordinator_address: Address,
         registry_coordinator_deploy_block: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-
         let avs_registry_reader = AvsRegistryChainReader::new(
             get_logger().clone(),
             registry_coordinator_address,
@@ -45,6 +68,7 @@ impl EigenStakingClient {
             avs_registry_reader.clone(),
             ws_endpoint.clone(),
         ).await?;
+
         Ok(Self {
             http_endpoint,
             registry_coordinator_address,
@@ -53,21 +77,15 @@ impl EigenStakingClient {
         })
     }
 
-    pub async fn get_operator_states(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn get_operator_states(&self) -> Result<Vec<QuorumInfo>, Box<dyn std::error::Error>> {
         let provider: RootProvider<_, Ethereum> = RootProvider::new_http(Url::parse(&self.http_endpoint)?);
         let current_block_number = provider.get_block_number().await?;
-        
-        println!("\nClient Configuration:");
-        println!("Registry Coordinator Address: {}", self.registry_coordinator_address);
-        println!("Operator State Retriever Address: {}", OPERATOR_STATE_RETRIEVER_ADDRESS);
-        println!("Registry Coordinator Deploy Block: {}", self.registry_coordinator_deploy_block);
-        println!("Current Block Number: {}", current_block_number);
-        
         self.operator_info_service
             .query_past_registered_operator_events_and_fill_db(
                 self.registry_coordinator_deploy_block,
                 current_block_number
             ).await?;
+
         let provider = get_provider(&self.http_endpoint);
         let operator_state_retriever = OperatorStateRetriever::new(OPERATOR_STATE_RETRIEVER_ADDRESS, provider);
         let quorum_numbers: Vec<u8> = vec![0];
@@ -81,39 +99,57 @@ impl EigenStakingClient {
             .await?
             ._0;
 
-        println!("\nOperator States Summary:");
-        println!("Total number of quorums: {}", operators_state.len());
-        println!("\nDetailed Operators Information:");
+        let mut quorum_infos = Vec::new();
         
-        let mut total_operators = 0;
-        let mut total_stake = 0u128;
-        
-        for (i, operators) in operators_state.iter().enumerate() {
-            println!("\nQuorum {} Details:", i);
-            println!("Number of operators in quorum: {}", operators.len());
+        for (quorum_number, operators) in operators_state.iter().enumerate() {
+            let mut quorum_operators = Vec::new();
+            let mut total_stake = U256::ZERO;
             
-            let mut quorum_stake = 0u128;
             for op in operators {
-                total_operators += 1;
-                quorum_stake += u128::try_from(op.stake).unwrap_or_default();
+                let stake = U256::from(op.stake);
+                total_stake += stake;
                 
-                println!("\n  Operator Address: {}", op.operator);
-                println!("  Stake: {} wei", op.stake);
-                if let Ok(info) = self.operator_info_service.get_operator_info(op.operator).await {
-                    println!("  Operator Info: {:?}", info);
+                let pub_keys = if let Ok(info) = self.operator_info_service.get_operator_info(op.operator).await {
+                    info.map(|keys| OperatorPubKeys {
+                        g1_pub_key: keys.g1_pub_key,
+                        g2_pub_key: keys.g2_pub_key,
+                    })
+                } else {
+                    None
+                };
+                
+                let socket = self.operator_info_service.get_operator_socket(op.operator).await.ok().flatten();
+                
+                quorum_operators.push(OperatorInfo {
+                    address: op.operator,
+                    stake,
+                    pub_keys,
+                    socket,
+                    quorum_number: quorum_number as u8,
+                });
+            }
+            
+            for operator in &quorum_operators {
+                println!("\n  Operator Address: {}", operator.address);
+                println!("  Stake: {} wei", operator.stake);
+                if let Some(ref keys) = operator.pub_keys {
+                    println!("  Operator Public Keys: {:?}", keys);
                 }
-                if let Ok(socket) = self.operator_info_service.get_operator_socket(op.operator).await {
-                    println!("  Operator Socket: {:?}", socket);
+                if let Some(ref socket) = operator.socket {
+                    println!("  Operator Socket: {}", socket);
                 }
             }
-            total_stake += quorum_stake;
-            println!("  Total stake in quorum {}: {} wei", i, quorum_stake);
+
+            quorum_infos.push(QuorumInfo {
+                quorum_number: quorum_number as u8,
+                operator_count: operators.len(),
+                total_stake,
+                operators: quorum_operators,
+            });
         }
         
-        println!("\nGlobal Statistics:");
-        println!("Total number of operators across all quorums: {}", total_operators);
-        println!("Total stake across all quorums: {} wei", total_stake);
         
-        Ok(())
+        
+        Ok(quorum_infos)
     }
 }
