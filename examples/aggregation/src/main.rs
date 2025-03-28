@@ -1,3 +1,4 @@
+//! Aggregate signatures from multiple contributors over the BN254 curve.
 //!
 //! # Usage (3 of 4 Threshold)
 //!
