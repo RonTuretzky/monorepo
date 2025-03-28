@@ -170,6 +170,9 @@ fn main() {
 
     // Configure bootstrappers (if provided)
     // TODO ask patrick if there's any value in having bootstrappers if we can get away from needing them 
+    // RAM: Usually bootstrappers are useful for joining a permisionless p2p network because they
+    // act as a dynamic public list of peers, but in our case EigenLayer already provides this with
+    // Sockets
     let bootstrappers = matches.get_many::<String>("bootstrappers");
     let mut bootstrapper_identities = Vec::new();
     if let Some(bootstrappers) = bootstrappers {
@@ -226,6 +229,8 @@ fn main() {
             let signer = Bn254::from_seed(peer);
             let verifier = signer.public_key();
             let verifier_g1 = signer.public_g1(); // TODO ask patrick why g1 is used here
+            // RAM: The G1 public keys are used by the orchestrator because Eigen needs both APKG1
+            // and APKG2 for their modified version of the BLS signature scheme
             tracing::info!(key = ?verifier, "registered contributor",);
             contributors.push(verifier.clone());
             contributors_map.insert(verifier, verifier_g1);
@@ -245,6 +250,9 @@ fn main() {
         if let Some(orchestrator) = matches.get_one::<u64>("orchestrator") {
             // Create contributor
             // Why are we creating a contributor if this is for the orchestator handling?
+            // RAM: This is contributer handling: If an orchestrator is passed in as an argument,
+            // it means we are running a contributer node that needs to know who is the
+            // orchestrator
             let (sender, receiver) = network.register(
                 0,
                 Quota::per_second(NonZeroU32::new(10).unwrap()),
@@ -252,6 +260,8 @@ fn main() {
                 COMPRESSION_LEVEL,
             );
             let orchestrator = Bn254::from_seed(*orchestrator).public_key(); // TODO change this to take a private key from ENV or remote signer
+            // RAM: If we have a single-orchestrator model, we need it implemented in the eigen
+            // middleware and read it from there
             let contributor =
                 handlers::Contributor::new(orchestrator, signer, contributors, threshold as usize); //TODO ask patrick if we can uncouple the contributor from the orchestrator
             runtime.spawn("contributor", contributor.run(sender, receiver));
@@ -263,6 +273,8 @@ fn main() {
                 COMPRESSION_LEVEL,
             );
             let orchestrator = handlers::Orchestrator::new( //TODO ask patrick, if there's no orchestrator we create one anyways?
+                // RAM: This is the orchestrator handling, we create an orchestrator handler and
+                // run it
                 runtime.clone(),
                 AGGREGATION_FREQUENCY,
                 contributors,

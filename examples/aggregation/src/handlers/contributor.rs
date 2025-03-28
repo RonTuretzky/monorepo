@@ -53,6 +53,9 @@ impl Contributor {
             // Parse message
             let Ok(message) = wire::Aggregation::decode(message) else {
                 continue; //TODO seems we need some error handling here 
+                // RAM: in the context of a permisionless network anyone could
+                // send random nonsense over the network - you just ignore them,
+                // you could maybe add DoS protection
             };
             let round = message.round; 
 
@@ -126,6 +129,8 @@ impl Contributor {
 
             // Handle message from orchestrator
             // TODO ask patrick what this means 
+            // RAM: We only pay attention to orchestrator messages that signal us to start
+            // signature aggregation
             match message.payload {
                 Some(wire::aggregation::Payload::Start(start)) => start,
                 _ => continue,
@@ -141,6 +146,10 @@ impl Contributor {
             hasher.update(&payload);
             let payload = hasher.finalize();
             // TODO Seems we only sign if the message if it's from an orchestrator  
+            // RAM: In this BN254 aggregation example only the orchestrator is permitted to initate
+            // a signature aggregation. The process is O(n^2) in 2 rounds:
+            // 1. orchestrator sends each contributer a "Start" message
+            // 2. Each contributer signs on the round number and messages all other contributers
             let signature = self.signer.sign(None, &payload);  
 
             // Store signature
@@ -151,6 +160,7 @@ impl Contributor {
 
             // Return signature to orchestrator
             // TODO ask patrick why we aren't sending what was signed as well  
+            // RAM: The message is the round number
             let message = wire::Aggregation {
                 round,
                 payload: Some(wire::aggregation::Payload::Signature(wire::Signature {
